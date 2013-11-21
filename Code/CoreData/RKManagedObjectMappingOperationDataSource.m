@@ -474,20 +474,82 @@ extern NSString * const RKObjectMappingNestingAttributeKeyName;
     if (! [checkedMapping isKindOfClass:[RKEntityMapping class]]) return NO;
     RKEntityMapping *entityMapping = (RKEntityMapping *)checkedMapping;
     NSString *modificationKey = [entityMapping.modificationAttribute name];
-    if (! modificationKey) return NO;
-    id currentValue = [mappingOperation.destinationObject valueForKey:modificationKey];
+    
+    // Bazinga : Also check the case if no modification methods are supported by
+    //           the destination object
+    if (! modificationKey &&
+        ![mappingOperation.destinationObject respondsToSelector:@selector(modificationCurrentValue)] &&
+        ![mappingOperation.destinationObject respondsToSelector:@selector(modificationRawValue:)] &&
+        ![mappingOperation.destinationObject respondsToSelector:@selector(modificationRawValueTransformationClass)]) {
+        
+        return NO;
+    }
+    
+    // Bazinga : Check if destinationObject responds to our custom selector,
+    //           if so use the return value from custom selector instead
+    //           else use original RestKit implementation
+    
+    id currentValue;
+    
+    if ([mappingOperation.destinationObject respondsToSelector:@selector(modificationCurrentValue)]) {
+        
+        currentValue =
+            [mappingOperation.destinationObject performSelector:@selector(modificationCurrentValue)
+                                                     withObject:nil];
+        
+    } else {
+        
+        currentValue = [mappingOperation.destinationObject valueForKey:modificationKey];
+    }
+    
     if (! currentValue) return NO;
     if (! [currentValue respondsToSelector:@selector(compare:)]) return NO;
     
-    RKPropertyMapping *propertyMappingForModificationKey = [(RKEntityMapping *)checkedMapping mappingForDestinationKeyPath:modificationKey];
-    id rawValue = [[mappingOperation sourceObject] valueForKeyPath:propertyMappingForModificationKey.sourceKeyPath];
-    if (! rawValue) return NO;
-    Class attributeClass = [entityMapping classForProperty:propertyMappingForModificationKey.destinationKeyPath];
+     RKPropertyMapping *propertyMappingForModificationKey = [(RKEntityMapping *)checkedMapping mappingForDestinationKeyPath:modificationKey];
+   
+    // Bazinga : Check if destinationObject responds to our custom selector,
+    //           if so use the return value from custom selector instead
+    //           else use original RestKit implementation
+    
+    id rawValue;
+    
+    if ([mappingOperation.destinationObject respondsToSelector:@selector(modificationRawValue:)]) {
+        
+        rawValue =
+            [mappingOperation.destinationObject performSelector:@selector(modificationRawValue:)
+                                                     withObject:[mappingOperation sourceObject]];
+        
+    } else {
+        
+        rawValue = [[mappingOperation sourceObject] valueForKeyPath:propertyMappingForModificationKey.sourceKeyPath];
+    }
 
+	if (! rawValue) return NO;
+    
+    RKDateToStringValueTransformer *transformer = [[RKDateToStringValueTransformer alloc] initWithDateToStringFormatter:entityMapping.preferredDateFormatter stringToDateFormatters:entityMapping.dateFormatters];
+    
+    // Bazinga : Check if destinationObject responds to our custom selector,
+    //           if so use the return value from custom selector instead
+    //           else use original RestKit implementation
+    
+    Class attributeClass;
+    
+    if ([mappingOperation.destinationObject respondsToSelector:@selector(modificationRawValueTransformationClass)]) {
+        
+        attributeClass =
+            [mappingOperation.destinationObject performSelector:@selector(modificationRawValueTransformationClass)
+                                                     withObject:nil];
+        
+    } else {
+        
+        attributeClass = [entityMapping classForProperty:propertyMappingForModificationKey.destinationKeyPath];
+    }
+    
     id transformedValue = nil;
     NSError *error = nil;
     id<RKValueTransforming> valueTransformer = propertyMappingForModificationKey.valueTransformer ?: entityMapping.valueTransformer;
     [valueTransformer transformValue:rawValue toValue:&transformedValue ofClass:attributeClass error:&error];
+
     if (! transformedValue) return NO;
     
     if ([currentValue isKindOfClass:[NSString class]]) {
